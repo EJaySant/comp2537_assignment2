@@ -1,0 +1,11 @@
+<%- include("templates/header") %>
+    <div class="container my-5">
+        <h1>Login</h1>
+        <form action="/loginSubmit" method="post" class="input-group">
+            <input type="email" class="form-control" placeholder="Email" name="email">
+            <input type="password" class="form-control" placeholder="Password" name="password">
+            <button class="btn btn-primary">Submit</button>
+        </form>
+    </div>
+<%- include("templates/footer") %>
+

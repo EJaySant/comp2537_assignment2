@@ -7,12 +7,16 @@ const MongoStore = require("connect-mongo");
 const bcrypt = require("bcrypt");
 const Joi = require("joi");
 const app = express();
+const path = require("path");
 const fs = require("fs");
+const URL = require("url").URL;
 
 const port = process.env.PORT || 8000;
 const saltRounds = 12;
 const expireTime = 60 * 60 * 1000;
+const defaultUserType = "user";
 
+// Secrets START
 const mongodb_host = process.env.MONGODB_HOST;
 const mongodb_user = process.env.MONGODB_USER;
 const mongodb_password = process.env.MONGODB_PASSWORD;
@@ -20,17 +24,10 @@ const mongodb_database = process.env.MONGODB_DATABASE;
 const mongodb_session_secret = process.env.MONGODB_SESSION_SECRET;
 
 const node_session_secret = process.env.NODE_SESSION_SECRET;
+// Secrets END
 
 var {database} = include("databaseConnection");
 const userCollection = database.db(mongodb_database).collection("users");
-
-function formatList(arr) {
-    if (arr.length === 0) return '';
-    if (arr.length === 1) return arr[0];
-    return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
-}
-
-app.use(express.urlencoded({extended: false}));
 
 var mongoStore = MongoStore.create({
 	mongoUrl: `mongodb+srv://${mongodb_user}:${mongodb_password}@${mongodb_host}/${mongodb_database}`,
@@ -39,6 +36,85 @@ var mongoStore = MongoStore.create({
 	}
 })
 
+const membersMedia = [
+    {fileName: "1364-dancing-toothless.gif", alt: "Dancing toothless meme"},
+    {fileName: "BreadbugPikmin4.png", alt: "Breadbug from Pikmin 4"},
+    {fileName: "HootySmugFace.png", alt: "Hooty from the Owl House with a smug face"}
+];
+
+app.locals.navLinks = {
+    public: [{name: "Home", url: "/"}, {name: "404", url: "/404"}], 
+
+    authenticated: [{name: "Members", url: "/members"}], 
+
+    admin: [{name: "Admin", url: "/admin"}]
+};
+
+function formatList(arr) {
+    if (arr.length === 0) return '';
+    if (arr.length === 1) return arr[0];
+    return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
+}
+
+function isAuthenticated(req)
+{
+    if(req.session.authenticated)
+    {
+        return true;
+    }
+    return false;
+}
+
+function sessionValidation(req, res, next)
+{
+    if (isAuthenticated(req)) 
+    {
+        next();
+    }
+    else 
+    {
+        res.redirect("/login");
+    }
+}
+
+function isAdmin(req)
+{
+    if (req.session.user_type == "admin") 
+    {
+        return true;
+    }
+    return false;
+}
+
+function adminAuthorization(req, res, next) 
+{
+    if (!isAdmin(req)) 
+    {
+        res.status(403);
+        res.render("errorMessage", {errorMsg: "Not Authorized"});
+        return;
+    }
+    else 
+    {
+        next();
+    }
+}
+
+function storeHeaderVariables(req, res, next)
+{
+    app.locals.authenticated = req.session.authenticated;
+    app.locals.user_type = req.session.user_type;
+
+    let fullURL = req.protocol + "://" + req.get("host") + req.originalUrl;
+    folders = new URL(fullURL).pathname.split("/").slice(1);
+    app.locals.currentURL = "/" + folders[0];
+
+    next();
+}
+
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "app"));
+app.use(express.urlencoded({extended: false}));
 
 app.use(session({
     secret: node_session_secret,
@@ -47,82 +123,77 @@ app.use(session({
     resave: true
 }));
 
-app.use("/css", express.static("./public/css"));
-app.use("/media", express.static("./public/media"));
+app.use("/css", express.static(path.join(__dirname, "public", "css")));
+app.use("/media", express.static(path.join(__dirname, "public", "media")));
 
+app.use("/", storeHeaderVariables);
 app.get("/", (req, res) => {
-    if(req.session.authorized)
-    {
-        let authorizedHomepageHTML = `
-            <!DOCTYPE html>
-            <html>
-                <head>
-                    <title>Ervin Santiago&apos;s Assignment 1</title>
-                    <link rel="stylesheet" href="css/styles.css">
-                </head>
-                <body>
-                    <div>
-                        <p>Hello, ${req.session.name}!</p>
-                    </div>
-                    <form action="/members" method="get">
-                        <button>Go to Members Area</button>
-                    </form>
-                    <form method="get" action="/logout">
-                        <button>Logout</button>
-                    </form>
-                </body>
-            </html>
-        `;
-        res.send(authorizedHomepageHTML);
-    }
-    else
-    {
-        let mainDoc = fs.readFileSync("./app/index.html", "utf8");
-        res.send(mainDoc);
-    }
+    res.render("index", {
+        name: req.session.name, 
+    });
 });
 
+app.use("/members", sessionValidation);
 app.get("/members", (req, res) => {
-    if(!req.session.authorized)
+
+    res.render("members", {name: req.session.name, membersMedia: membersMedia});
+});
+
+app.use("/admin", sessionValidation, adminAuthorization);
+app.get("/admin", async (req, res) => {
+    const users = await userCollection.find({}).toArray();
+
+    res.render("admin", {users: users});
+});
+
+app.post("/changeUserType", async (req, res) => {
+    let promoteValue = req.body.promote;
+    let demoteValue = req.body.demote;
+    let newUserType;
+
+    const schema = Joi.object(
     {
-        res.redirect("/");
+        promoteValue: Joi.string().alphanum().max(20),
+        demoteValue: Joi.string().alphanum().max(20)
+    });
+
+    const validationResult = schema.validate({promoteValue, demoteValue});
+    if(validationResult.error != null)
+    {
+        res.redirect("errorMessage", {errorMsg: "Invalid name."});
+        return;
+    }
+
+    if(promoteValue)
+    {
+        newUserType = "admin";
+        await userCollection.updateOne({name: promoteValue}, {$set: {user_type: newUserType}});
+    }
+    else if(demoteValue)
+    {
+        newUserType = "user";
+        await userCollection.updateOne({name: demoteValue}, {$set: {user_type: newUserType}});
     }
     else
     {
-        let mediaFileNames = ["1364-dancing-toothless.gif", "Breadbug pikmin 4.png", "Hooty Smug Face.png"];
-        let mediaFileAltMsg = ["Dancing toothless meme", "Breadbug from Pikmin 4", "Hooty smug face from The Owl House"];
-        let randomNum = Math.floor(Math.random() * 3);
-
-        let membersHTML = `
-            <!DOCTYPE html>
-            <html>
-                <head>
-                    <title>Ervin Santiago&apos;s Assignment 1</title>
-                    <link rel="stylesheet" href="css/styles.css">
-                </head>
-                <body>
-                    <div>
-                        <h1>Hello, ${req.session.name}!</h1>
-                        <img src="media/${mediaFileNames[randomNum]}" alt="${mediaFileAltMsg[randomNum]}" width="500px" height="500px">
-                    </div>
-                    <form method="get" action="/logout">
-                        <button>Logout</button>
-                    </form>
-                </body>
-            </html>
-        `;
-        res.send(membersHTML);
+        res.redirect("errorMessage", {errorMsg: "Invalid action for changing user type."});
+        return;
     }
+
+    if(req.session.name == (promoteValue || demoteValue))
+    {
+        req.session.user_type = newUserType;
+    }
+
+    res.redirect("/admin");
 });
 
 app.get("/signup", (req, res) => {
-    let signupDoc = fs.readFileSync("./app/signup.html", "utf8");
-    res.send(signupDoc);
+    res.render("signup");
 });
 
 app.get("/login", (req, res) => {
-    let signupDoc = fs.readFileSync("./app/login.html", "utf8");
-    res.send(signupDoc);
+    res.render("login");
 });
 
 app.get("/logout", (req, res) => {
@@ -158,51 +229,26 @@ app.post("/signupSubmit", async (req, res) => {
         {
             missingFields.push("password");
         }
-        let signUpFailHTML = `
-            <!DOCTYPE html>
-            <html>
-                <head>
-                    <title>Ervin Santiago&apos;s Assignment 1</title>
-                    <link rel="stylesheet" href="css/styles.css">
-                </head>
-                <body>
-                    <div>
-                        <p>A valid ${formatList(missingFields)} is required.</p>
-                        <a href="/signup">Try again</a>
-                    </div>
-                </body>
-            </html>
-        `;
-        res.send(signUpFailHTML);
+        let signupFailMsg = `A valid ${formatList(missingFields)} is required.`;
+        let route = "signup";
+        res.render("authenticationFail", {failMsg: signupFailMsg, route: route});
         return;
     }
 
     var hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    await userCollection.insertOne({name: name, email: email, password: hashedPassword});
-    req.session.authorized = true;
+    await userCollection.insertOne({name: name, email: email, password: hashedPassword, user_type: defaultUserType});
+    req.session.authenticated = true;
     req.session.name = name;
+    req.session.user_type = defaultUserType;
     req.session.cookie.maxAge = expireTime;
 
     res.redirect("/members");
 });
 
 app.post("/loginSubmit", async (req, res) => {
-    let loginFailHTML = `
-        <!DOCTYPE html>
-        <html>
-            <head>
-                <title>Ervin Santiago&apos;s Assignment 1</title>
-                <link rel="stylesheet" href="css/styles.css">
-            </head>
-            <body>
-                <div>
-                    <p>Invalid email/password combination.</p>
-                    <a href="/login">Try again</a>
-                </div>
-            </body>
-        </html>
-    `;
+    let loginFailMsg = "Invalid email/password combination.";
+    let route = "login";
 
     var email = req.body.email;
     var password = req.body.password;
@@ -214,35 +260,41 @@ app.post("/loginSubmit", async (req, res) => {
     });
 
 	const validationResult = schema.validate({email, password});
-	if (validationResult.error != null) {
-		res.send(loginFailHTML);
+	if(validationResult.error != null)
+    {
+		res.render("authenticationFail", {failMsg: loginFailMsg, route: route});
 	    return;
 	}
 
-	const result = await userCollection.find({email: email}).project({email: 1, password: 1, name: 1}).toArray();
+	const result = await userCollection.find({email: email}).project({email: 1, password: 1, name: 1, user_type: 1, _id: 1}).toArray();
 
-	if (result.length != 1) {
-		res.send(loginFailHTML);
+	if(result.length != 1) {
+		res.render("authenticationFail", {failMsg: loginFailMsg, route: route});
 		return;
 	}
 
-	if (await bcrypt.compare(password, result[0].password)) {
-		req.session.authorized = true;
+	if(await bcrypt.compare(password, result[0].password)) 
+    {
+		req.session.authenticated = true;
         req.session.name = result[0].name;
+        req.session.user_type = result[0].user_type;
 		req.session.cookie.maxAge = expireTime;
 
 		res.redirect("/members");
 		return;
 	}
-	else {
-		res.send(loginFailHTML);
+	else 
+    {
+		res.render("authenticationFail", {failMsg: loginFailMsg, route: route});
 		return;
 	}
 });
 
 app.get("*dummy", (req, res) => {
-    res.status = 404;
-    res.send("Page not found - 404");
+    let errorMsg = "Page not found - 404";
+
+    res.status(404);
+    res.render("errorMessage", {errorMsg: errorMsg});
 });
 
 app.listen(port, () => {

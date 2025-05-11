@@ -1,0 +1,7 @@
+<div class="container d-flex flex-row align-items-center fs-4">
+    <p class="my-auto m-3"><%= user.name %> (<%= user.user_type %>)</p>
+    <form action="/changeUserType" method="post">
+        <button name="promote" value="<%= user.name %>" class="btn btn-success m-1">Promote to Admin</button>
+        <button name="demote" value="<%= user.name %>" class="btn btn-danger m-1">Demote to User</button>
+    </form>
+</div>

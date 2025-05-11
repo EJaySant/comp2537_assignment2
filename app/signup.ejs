@@ -1,0 +1,11 @@
+<%- include("templates/header") %>
+    <div class="container  my-5">
+        <h1>Create User</h1>
+        <form action="/signupSubmit" method="post" class="input-group">
+            <input type="text" placeholder="Name" name="name"  class="form-control">
+            <input type="email" placeholder="Email" name="email"  class="form-control">
+            <input type="password" placeholder="Password" name="password"  class="form-control">
+            <button class="btn btn-primary">Submit</button>
+        </form>
+    </div>
+<%- include("templates/footer") %>

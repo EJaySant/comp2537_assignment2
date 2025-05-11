@@ -1,0 +1,22 @@
+<%- include("templates/header") %>
+    <% if(locals.authenticated) { %>
+        <div class="container d-flex flex-column my-3">
+            <h1>Hello, <%= name %>!</h1>
+            <form action="/members" method="get" class="input-group m-2">
+                <button class="btn btn-primary">Go to Members Area</button>
+            </form>
+            <form method="get" action="/logout" class="input-group m-2">
+                <button class="btn btn-outline-secondary">Logout</button>
+            </form>
+        </div>
+    <% } else { %>
+        <div class="container d-flex justify-content-around my-3">
+            <form method="get" action="/signup" class="input-group m-3 d-flex justify-content-end">
+                <button class="btn btn-primary">Sign up</button>
+            </form>
+            <form method="get" action="/login" class="input-group m-3 d-flex justify-content-start">
+                <button class="btn btn-primary">Log in</button>
+            </form>
+        </div>
+    <% } %>
+<%- include("templates/footer") %>
